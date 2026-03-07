@@ -17,7 +17,7 @@ const COST_PLANTS = [
 
 // --- State Application ---
 let state = {
-    viewDate: new Date(2026, 0, 1), // Year for main graph, Month for modal
+    viewDate: new Date(), // Default to current date
     showComparison: false,
     modalShowComparison: false,
     // 7 items for Production Chart (LP, Sub, Greitmo, Brazing, Dom, Exp, Exp2)
@@ -601,52 +601,75 @@ const updateDailyChart = async () => {
 // --- SECONDARY CHARTS (Cost, Consumption, CO2) ---
 const secondaryCache = {};
 
+// Helper to fetch consumption data from API
+const fetchConsumptionData = async (year) => {
+    try {
+        const response = await fetch(`${basePath}/api/MDB/GetMonthlyTotals?year=${year}`);
+        if (!response.ok) {
+            console.error('Failed to fetch consumption data:', response.status);
+            return { lp: [], plating: [], brazing: [] };
+        }
+        const result = await response.json();
+
+        // Calculate monthly totals from daily consumption (LastWh - FirstWh)
+        const monthlyTotals = { lp: [], plating: [], brazing: [] };
+
+        for (let m = 1; m <= 12; m++) {
+            const monthStr = `${year}-${String(m).padStart(2, '0')}`;
+            COST_PLANTS.forEach(plant => {
+                const plantData = result.dailyTotals?.[plant.id] || {};
+                // Sum all daily consumption values for the month
+                const monthValues = Object.entries(plantData)
+                    .filter(([date]) => date.startsWith(monthStr))
+                    .map(([, dailyKwh]) => dailyKwh);
+                const monthlyTotal = monthValues.reduce((sum, val) => sum + val, 0);
+                monthlyTotals[plant.id].push(Math.round(monthlyTotal * 1000) / 1000); // Round to 3 decimals
+            });
+        }
+
+        // Update last updated timestamp
+        const now = new Date();
+        const lastUpdatedEl = document.getElementById('consumptionLastUpdated');
+        if (lastUpdatedEl) {
+            const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+            lastUpdatedEl.textContent = `Updated: ${dateStr} ${timeStr}`;
+        }
+
+        return monthlyTotals;
+    } catch (error) {
+        console.error('Error fetching consumption data:', error);
+        return { lp: [], plating: [], brazing: [] };
+    }
+};
+
 // Helper to generate data for Cost, KW, CO2
-const generateSecondaryData = (year) => {
+const generateSecondaryData = async (year) => {
     const key = String(year);
     if (secondaryCache[key]) return secondaryCache[key];
 
-    // Mock Data based on typical production patterns (Seasonality: High in Q4, Low in Q2)
-    // LP: Low consumption, Plating: Medium, Brazing: High (Ovens)
+    // Fetch real consumption data
+    const monthlyTotals = await fetchConsumptionData(year);
 
-    // Base profiles (kWh per month average)
-    const baseCons = { 'lp': 8000, 'plating': 25000, 'brazing': 65000 };
-    const seasonalFactors = [0.9, 0.95, 1.1, 1.0, 0.9, 0.9, 1.0, 1.05, 1.15, 1.25, 1.2, 1.1]; // Jan-Dec
-
-    // Cost per Unit (THB/kWh) - Fluctuates slightly
-    const ftRate = [4.2, 4.2, 4.2, 4.2, 4.5, 4.5, 4.5, 4.5, 4.7, 4.7, 4.7, 4.7]; // Example rate changes
-
-    // Emission Factor (kgCO2e/kWh) - Constant for grid electricity
-    const emissionFactor = 0.4999;
-
-    // Consumption (kWh)
+    // Consumption (kWh) - Real data
     const consData = COST_PLANTS.map(plant => ({
         name: plant.name,
         color: plant.color,
-        data: seasonalFactors.map(factor => {
-            const base = baseCons[plant.id];
-            // Add some randomness +/- 5%
-            const variance = (Math.random() * 0.1) + 0.95;
-            return parseFloat((base * factor * variance).toFixed(0));
-        })
+        data: monthlyTotals[plant.id]
     }));
 
-    // Cost (THB) = Consumption * Rate
-    const costData = COST_PLANTS.map((plant, idx) => ({
+    // Cost (THB) - Empty (no data yet)
+    const costData = COST_PLANTS.map(plant => ({
         name: plant.name,
         color: plant.color,
-        data: consData[idx].data.map((kwh, mIdx) => {
-            return parseFloat((kwh * ftRate[mIdx]).toFixed(2));
-        })
+        data: new Array(12).fill(0)
     }));
 
-    // CO2 (kg) = Consumption * Factor
-    const co2Data = COST_PLANTS.map((plant, idx) => ({
+    // CO2 (kg) - Empty (no data yet)
+    const co2Data = COST_PLANTS.map(plant => ({
         name: plant.name,
         color: plant.color,
-        data: consData[idx].data.map(kwh => {
-            return parseFloat((kwh * emissionFactor).toFixed(2));
-        })
+        data: new Array(12).fill(0)
     }));
 
     const result = { costData, consData, co2Data };
@@ -741,7 +764,7 @@ const initSecondaryCharts = () => {
     emissionChart.render();
 };
 
-const updateSecondaryCharts = (year) => {
+const updateSecondaryCharts = async (year) => {
     document.getElementById('costYearLabel').textContent = year;
 
     // Future Check
@@ -751,7 +774,7 @@ const updateSecondaryCharts = (year) => {
         return;
     }
 
-    const data = generateSecondaryData(year);
+    const data = await generateSecondaryData(year);
 
     // Helper to filter hidden plants based on mapping
     // COST[0] (LP) -> visiblePlants[0]
@@ -850,16 +873,26 @@ const secModal = document.getElementById('secondaryDetailModal');
 // Reusable Options
 const getDetailChartOptions = (type, unit) => ({
     series: [],
-    chart: { type: 'line', height: 350, toolbar: { show: false } },
+    chart: { 
+        type: 'line', 
+        height: 350, 
+        toolbar: { show: false },
+        zoom: { enabled: false }
+    },
     stroke: { width: 3, curve: 'smooth' },
     plotOptions: { bar: { borderRadius: 4, columnWidth: '50%' } }, // If bar used
-    yaxis: { title: { text: unit } },
+    yaxis: { 
+        title: { text: type === 'cons' ? 'Wh' : unit },
+        labels: { 
+            formatter: (val) => val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val.toFixed(0)
+        }
+    },
     legend: { position: 'top', horizontalAlign: 'right', inverseOrder: true },
     colors: COST_PLANTS.map(p => p.color),
     grid: { borderColor: '#f1f5f9' }
 });
 
-const openSecondaryModal = (type) => {
+const openSecondaryModal = async (type) => {
     let title = '';
     let unit = '';
     if (type === 'cost') { title = 'Electricity Cost Analysis'; unit = 'THB'; }
@@ -874,8 +907,8 @@ const openSecondaryModal = (type) => {
     document.getElementById('secModalTitle').textContent = title;
     // Set titles for sub-charts
     document.getElementById('secChartTitle1').textContent = `Daily Total ${unit} (${currentMonthName} ${currentYear})`;
-    document.getElementById('secChartTitle2').textContent = `Avg ${unit} per Unit (Annual View - 1-12 ${currentYear})`;
-    document.getElementById('secChartTitle3').textContent = `Avg ${unit} per Unit (Daily View - ${currentMonthName} ${currentYear})`;
+    document.getElementById('secChartTitle2').textContent = `Avg Wh per Unit (Annual View - Jan to Dec ${currentYear})`;
+    document.getElementById('secChartTitle3').textContent = `Avg Wh per Unit (Daily View - ${currentMonthName} ${currentYear})`;
 
     secModal.classList.add('active');
 
@@ -883,7 +916,7 @@ const openSecondaryModal = (type) => {
     if (!secChart1) {
         secChart1 = new ApexCharts(document.querySelector("#secChart1"), {
             ...getDetailChartOptions(type, unit),
-            chart: { type: 'bar', stacked: true, height: 350, toolbar: { show: false } },
+            chart: { type: 'bar', stacked: true, height: 350, toolbar: { show: false }, zoom: { enabled: false } },
             plotOptions: {
                 bar: {
                     borderRadius: 4,
@@ -898,58 +931,185 @@ const openSecondaryModal = (type) => {
                     }
                 }
             },
-            dataLabels: { enabled: false }
+            dataLabels: { enabled: false },
+            stroke: { curve: 'straight' }
         });
         secChart1.render();
-        secChart2 = new ApexCharts(document.querySelector("#secChart2"), getDetailChartOptions(type, unit));
+        secChart2 = new ApexCharts(document.querySelector("#secChart2"), {
+            ...getDetailChartOptions(type, unit),
+            stroke: { curve: 'straight' }
+        });
         secChart2.render();
-        secChart3 = new ApexCharts(document.querySelector("#secChart3"), getDetailChartOptions(type, unit));
+        secChart3 = new ApexCharts(document.querySelector("#secChart3"), {
+            ...getDetailChartOptions(type, unit),
+            stroke: { curve: 'straight' }
+        });
         secChart3.render();
     } else {
         // Update Y-Axis titles
         [secChart1, secChart2, secChart3].forEach(c => c.updateOptions({ yaxis: { title: { text: unit } } }));
     }
 
-    updateSecondaryDetailCharts(type);
+    await updateSecondaryDetailCharts(type);
 };
 
-const updateSecondaryDetailCharts = (type) => {
-    // 1. Daily Total (Month View) - using modal viewDate logic or just random
-    const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-    const randFloat = (min, max) => (Math.random() * (max - min) + min);
-
-    // Mock Data Gen
-    const days = 30; // Simplify
-    const daysArr = Array.from({ length: days }, (_, i) => i + 1);
+const updateSecondaryDetailCharts = async (type) => {
+    const year = state.viewDate.getFullYear();
+    const month = state.viewDate.getMonth() + 1;
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const daysArr = Array.from({ length: daysInMonth }, (_, i) => i + 1);
     const monthsArr = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-    // Chart 1: Daily Total (Stacked Bar)
-    const series1 = COST_PLANTS.map(p => ({
-        name: p.name,
-        type: 'bar',
-        data: Array.from({ length: days }, () => rand(1000, 5000))
-    }));
-    secChart1.updateOptions({ xaxis: { categories: daysArr } });
-    secChart1.updateSeries(series1);
+    if (type === 'cons') {
+        // Fetch real consumption data
+        try {
+            const response = await fetch(`${basePath}/api/MDB/GetDailyTotals?year=${year}&month=${month}`);
+            const result = await response.json();
 
-    // Chart 2: Avg Per Unit (Annual 1-12) (Line)
-    // Low value ~ 0.5 - 2.0
-    const series2 = COST_PLANTS.map(p => ({
-        name: p.name,
-        type: 'line',
-        data: Array.from({ length: 12 }, () => parseFloat(randFloat(0.2, 1.5).toFixed(3)))
-    }));
-    secChart2.updateOptions({ xaxis: { categories: monthsArr } });
-    secChart2.updateSeries(series2);
+            // Chart 1: Daily Total (Stacked Bar) - Real consumption data
+            const series1 = COST_PLANTS.map(plant => ({
+                name: plant.name,
+                type: 'bar',
+                data: daysArr.map(day => {
+                    const dateKey = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    const value = result.dailyTotals?.[plant.id]?.[dateKey];
+                    // Return null for missing days (will show as gap in chart)
+                    return value !== undefined ? value : null;
+                })
+            }));
+            secChart1.updateOptions({ xaxis: { categories: daysArr } });
+            secChart1.updateSeries(series1);
 
-    // Chart 3: Avg Per Unit (Daily 1-30) (Line)
-    const series3 = COST_PLANTS.map(p => ({
-        name: p.name,
-        type: 'line',
-        data: Array.from({ length: days }, () => parseFloat(randFloat(0.2, 1.5).toFixed(3)))
-    }));
-    secChart3.updateOptions({ xaxis: { categories: daysArr } });
-    secChart3.updateSeries(series3);
+            // Chart 2: Monthly Avg kWh per Unit (Line) - Monthly kWh / Monthly FG Production
+            // Fetch production data for the year
+            const startDate = `${year}-01-01`;
+            const endDate = `${year}-12-31`;
+            const prodResponse = await fetch(`${basePath}/ElectricChart/GetProductionData?startDate=${startDate}&endDate=${endDate}`);
+            const prodData = prodResponse.ok ? await prodResponse.json() : [];
+
+            // Process production data by month
+            const prodByMonth = { lp: [], plating: [], brazing: [] };
+            for (let m = 0; m < 12; m++) {
+                prodByMonth.lp.push(0);
+                prodByMonth.plating.push(0);
+                prodByMonth.brazing.push(0);
+            }
+
+            if (Array.isArray(prodData)) {
+                prodData.forEach(item => {
+                    const date = new Date(item.tranDate);
+                    const m = date.getMonth();
+                    const p = item.plant ? item.plant.toLowerCase() : '';
+                    const qty = item.tranQty ? parseFloat(item.tranQty) : 0;
+                    if (p === 'lp' || p === 'plating' || p === 'brazing') {
+                        prodByMonth[p][m] += qty;
+                    }
+                });
+            }
+
+            // Calculate monthly totals from consumption
+            const monthlyTotals = await fetchConsumptionData(year);
+
+            // Calculate Avg Wh per Unit = Monthly kWh * 1000 / Monthly FG Production
+            const series2 = COST_PLANTS.map(plant => {
+                const data = monthlyTotals[plant.id].map((kwh, idx) => {
+                    const production = prodByMonth[plant.id][idx] || 1; // Avoid division by zero
+                    const wh = kwh * 1000; // Convert to Wh for better scale
+                    return production > 0 ? parseFloat((wh / production).toFixed(2)) : 0;
+                });
+                return {
+                    name: plant.name,
+                    type: 'line',
+                    data: data
+                };
+            });
+            secChart2.updateOptions({ xaxis: { categories: monthsArr } });
+            secChart2.updateSeries(series2);
+
+            // Chart 3: Daily Avg kWh per Unit (Line) - Daily kWh / Daily FG Production
+            // Fetch daily production data
+            const startDaily = `${year}-${String(month).padStart(2, '0')}-01`;
+            const endDaily = `${year}-${String(month).padStart(2, '0')}-${daysInMonth}`;
+            const dailyProdResponse = await fetch(`${basePath}/ElectricChart/GetProductionData?startDate=${startDaily}&endDate=${endDaily}`);
+            const dailyProdData = dailyProdResponse.ok ? await dailyProdResponse.json() : [];
+
+            // Process daily production data
+            const prodByDay = { lp: {}, plating: {}, brazing: {} };
+            daysArr.forEach(day => {
+                prodByDay.lp[day] = 0;
+                prodByDay.plating[day] = 0;
+                prodByDay.brazing[day] = 0;
+            });
+
+            if (Array.isArray(dailyProdData)) {
+                dailyProdData.forEach(item => {
+                    const date = new Date(item.tranDate);
+                    const day = date.getDate();
+                    const p = item.plant ? item.plant.toLowerCase() : '';
+                    const qty = item.tranQty ? parseFloat(item.tranQty) : 0;
+                    if ((p === 'lp' || p === 'plating' || p === 'brazing') && prodByDay[p][day] !== undefined) {
+                        prodByDay[p][day] += qty;
+                    }
+                });
+            }
+
+            const series3 = COST_PLANTS.map(plant => {
+                const data = daysArr.map(day => {
+                    const dateKey = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    const kwh = result.dailyTotals?.[plant.id]?.[dateKey];
+                    if (kwh === undefined) return null; // Missing day
+                    const production = prodByDay[plant.id][day] || 1; // Avoid division by zero
+                    const wh = kwh * 1000; // Convert to Wh for better scale
+                    return production > 0 ? parseFloat((wh / production).toFixed(2)) : 0;
+                });
+                return {
+                    name: plant.name,
+                    type: 'line',
+                    data: data
+                };
+            });
+            secChart3.updateOptions({ xaxis: { categories: daysArr } });
+            secChart3.updateSeries(series3);
+        } catch (error) {
+            console.error('Error fetching consumption detail data:', error);
+            // Fallback to empty
+            const emptyData = () => new Array(daysInMonth).fill(0);
+            secChart1.updateSeries(COST_PLANTS.map(p => ({ name: p.name, type: 'bar', data: emptyData() })));
+            secChart2.updateSeries(COST_PLANTS.map(p => ({ name: p.name, type: 'line', data: new Array(12).fill(0) })));
+            secChart3.updateSeries(COST_PLANTS.map(p => ({ name: p.name, type: 'line', data: emptyData() })));
+        }
+    } else {
+        // Cost and CO2 - Empty data (no data yet)
+        const emptyDaily = () => new Array(daysInMonth).fill(0);
+        const emptyMonthly = () => new Array(12).fill(0);
+
+        // Chart 1: Daily Total (Stacked Bar) - Empty
+        const series1 = COST_PLANTS.map(p => ({
+            name: p.name,
+            type: 'bar',
+            data: emptyDaily()
+        }));
+        secChart1.updateOptions({ xaxis: { categories: daysArr } });
+        secChart1.updateSeries(series1);
+
+        // Chart 2: Monthly Total (Line) - Empty
+        const series2 = COST_PLANTS.map(p => ({
+            name: p.name,
+            type: 'line',
+            data: emptyMonthly()
+        }));
+        secChart2.updateOptions({ xaxis: { categories: monthsArr } });
+        secChart2.updateSeries(series2);
+
+        // Chart 3: Daily Average (Line) - Empty
+        const series3 = COST_PLANTS.map(p => ({
+            name: p.name,
+            type: 'line',
+            data: emptyDaily()
+        }));
+        secChart3.updateOptions({ xaxis: { categories: daysArr } });
+        secChart3.updateSeries(series3);
+    }
 };
 
 document.getElementById('closeSecDetailBtn').addEventListener('click', () => {
@@ -972,11 +1132,22 @@ const changeMonth = (offset) => {
 document.addEventListener('DOMContentLoaded', () => {
     loadSettings();
 
-    // Initialize state from Calendar Input
+    // Initialize state from Calendar Input or use current date
     const globalInput = document.getElementById('globalDateInput');
     if (globalInput && globalInput.value) {
         const [y, m] = globalInput.value.split('-').map(Number);
         state.viewDate = new Date(y, m - 1, 1);
+    } else {
+        // Set to current month/year
+        const now = new Date();
+        state.viewDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+
+    // Update globalDateInput to match state
+    if (globalInput) {
+        const y = state.viewDate.getFullYear();
+        const m = state.viewDate.getMonth() + 1;
+        globalInput.value = `${y}-${String(m).padStart(2, '0')}`;
     }
 
     initMainChart();

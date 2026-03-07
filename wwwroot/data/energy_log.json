@@ -1,0 +1,57 @@
+[
+  {
+    "MDB": "08",
+    "Plant": "brazing",
+    "kWh": 13416.833,
+    "Wh": 13416833,
+    "Status": "Online",
+    "Timestamp": 1772873281506,
+    "DateTime": "2026-03-07 08:48:01",
+    "Date": "07/03/2026",
+    "Time": "15:48:01"
+  },
+  {
+    "MDB": "08",
+    "Plant": "brazing",
+    "kWh": 13417.833,
+    "Wh": 13417833,
+    "Status": "Online",
+    "Timestamp": 1772873881506,
+    "DateTime": "2026-03-07 08:58:01",
+    "Date": "07/03/2026",
+    "Time": "15:58:01"
+  },
+  {
+    "MDB": "08",
+    "Plant": "brazing",
+    "kWh": 13418.833,
+    "Wh": 13418833,
+    "Status": "Online",
+    "Timestamp": 1772873881506,
+    "DateTime": "2026-03-07 08:58:01",
+    "Date": "07/03/2026",
+    "Time": "15:58:01"
+  },
+  {
+    "MDB": "08",
+    "Plant": "brazing",
+    "kWh": 13418.833,
+    "Wh": 13418833,
+    "Status": "Online",
+    "Timestamp": 1772874481506,
+    "DateTime": "2026-03-07 09:08:01",
+    "Date": "07/03/2026",
+    "Time": "16:08:01"
+  },
+  {
+    "MDB": "08",
+    "Plant": "brazing",
+    "kWh": 13424.833,
+    "Wh": 13424833,
+    "Status": "Online",
+    "Timestamp": 1772875081506,
+    "DateTime": "2026-03-07 09:18:01",
+    "Date": "07/03/2026",
+    "Time": "16:18:01"
+  }
+]

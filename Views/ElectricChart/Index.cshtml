@@ -57,7 +57,7 @@
                     </button>
 
                     <div class="current-month-container">
-                        <input type="month" id="globalDateInput" class="current-month" value="2026-01"
+                        <input type="month" id="globalDateInput" class="current-month"
                             style="background: transparent; border: none; color: inherit; font-family: inherit; font-size: inherit; font-weight: inherit; cursor: pointer;">
                     </div>
 
@@ -135,10 +135,13 @@
                         <i class="ri-flashlight-line" style="font-size: 1.2rem; color: #eab308;"></i>
                         Consumption (kWh)
                     </div>
-                    <button class="detail-btn" onclick="openSecondaryModal('cons')"
-                        style="padding: 6px 12px; font-size: 0.85rem;">
-                        <i class="ri-search-eye-line"></i> Detail
-                    </button>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span id="consumptionLastUpdated" style="font-size: 0.75rem; color: var(--text-secondary);"></span>
+                        <button class="detail-btn" onclick="openSecondaryModal('cons')"
+                            style="padding: 6px 12px; font-size: 0.85rem;">
+                            <i class="ri-search-eye-line"></i> Detail
+                        </button>
+                    </div>
                 </div>
                 <div id="consumptionChart"></div>
             </div>
@@ -233,8 +236,7 @@
                 <!-- Graph 2: Monthly Per Unit (Line) -->
                 <div class="chart-section" style="margin-bottom: 40px;">
                     <h3 id="secChartTitle2"
-                        style="margin-bottom: 15px; font-size: 1.1rem; color: var(--text-secondary);">Avg per Unit
-                        (Monthly)</h3>
+                        style="margin-bottom: 15px; font-size: 1.1rem; color: var(--text-secondary);">Avg Wh per Unit (Annual View - Jan to Dec)</h3>
                     <div id="secChart2"></div>
                 </div>
 
@@ -243,8 +245,7 @@
                 <!-- Graph 3: Daily Per Unit (Line) -->
                 <div class="chart-section">
                     <h3 id="secChartTitle3"
-                        style="margin-bottom: 15px; font-size: 1.1rem; color: var(--text-secondary);">Avg per Unit
-                        (Daily)</h3>
+                        style="margin-bottom: 15px; font-size: 1.1rem; color: var(--text-secondary);">Avg Wh per Unit (Daily View)</h3>
                     <div id="secChart3"></div>
                 </div>
             </div>
