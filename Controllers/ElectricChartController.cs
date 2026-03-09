@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using EmissiView.Services;
+using EmissiView.Repositories;
 using System;
 using System.Threading.Tasks;
 
@@ -7,23 +7,16 @@ namespace EmissiView.Controllers
 {
     public class ElectricChartController : Controller
     {
-        private readonly IElectricChartRepository _repository;
+        private readonly ElectricChartRepository _repository;
 
-        public ElectricChartController(IElectricChartRepository repository)
+        public ElectricChartController(ElectricChartRepository repository)
         {
             _repository = repository;
         }
 
         public IActionResult Index()
         {
-            try
-            {
-                return View();
-            }
-            catch (Exception ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
+            return View();
         }
 
         [HttpGet]
@@ -36,7 +29,7 @@ namespace EmissiView.Controllers
             }
             catch (Exception ex)
             {
-                return BadRequest(new { message = ex.Message });
+                return StatusCode(500, new { message = "An error occurred while retrieving production data.", error = ex.Message });
             }
         }
     }

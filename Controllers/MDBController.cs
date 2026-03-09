@@ -13,22 +13,21 @@ namespace EmissiView.Controllers
     {
         private readonly string _dataFolder;
         private readonly string _logFile;
-        private readonly string _consumptionFile;
+        private readonly string _consumptionFolder;
 
         public MDBController()
         {
             _dataFolder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "data");
             _logFile = Path.Combine(_dataFolder, "energy_log.json");
-            _consumptionFile = Path.Combine(_dataFolder, "consumption.json");
+            _consumptionFolder = Path.Combine(_dataFolder, "consumption");
 
-            // Ensure data folder exists
+            // Ensure folders exist
             if (!Directory.Exists(_dataFolder))
-            {
                 Directory.CreateDirectory(_dataFolder);
-            }
+            if (!Directory.Exists(_consumptionFolder))
+                Directory.CreateDirectory(_consumptionFolder);
         }
 
-        // Plant mapping based on MDB number
         private string GetPlantFromMDB(string mdb)
         {
             return mdb switch
@@ -47,13 +46,18 @@ namespace EmissiView.Controllers
             };
         }
 
+        private string GetConsumptionFilePath(string plant, int year, int month)
+        {
+            var plantFolder = Path.Combine(_consumptionFolder, plant);
+            if (!Directory.Exists(plantFolder))
+                Directory.CreateDirectory(plantFolder);
+            return Path.Combine(plantFolder, $"{year}-{month:D2}.jsonl");
+        }
+
         [HttpPost("ReceiveData")]
         public IActionResult ReceiveData([FromBody] MDBDataModel model)
         {
-            if (model == null)
-            {
-                return BadRequest(new { message = "Invalid data received" });
-            }
+            if (model == null) return BadRequest(new { message = "Invalid data received" });
 
             try
             {
@@ -61,8 +65,10 @@ namespace EmissiView.Controllers
                 var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(model.Timestamp).DateTime;
                 var dateKey = timestamp.ToString("yyyy-MM-dd");
                 var timeKey = timestamp.ToString("HH:mm:ss");
+                var year = timestamp.Year;
+                var month = timestamp.Month;
 
-                // 1. Save raw log entry
+                // 1. Save raw log entry (keep existing format)
                 var logEntry = new
                 {
                     MDB = model.MDB,
@@ -81,207 +87,118 @@ namespace EmissiView.Controllers
                 {
                     var existingJson = System.IO.File.ReadAllText(_logFile);
                     if (!string.IsNullOrEmpty(existingJson))
-                    {
                         logData = JsonSerializer.Deserialize<List<object>>(existingJson) ?? new List<object>();
-                    }
                 }
                 logData.Add(logEntry);
                 System.IO.File.WriteAllText(_logFile, JsonSerializer.Serialize(logData, new JsonSerializerOptions { WriteIndented = true }));
 
-                // 2. Update consumption data - store first and last reading of each day
-                // Structure: { plant: { "yyyy-MM-dd": { "firstWh": x, "lastWh": y, "firstTime": "HH:mm:ss", "lastTime": "HH:mm:ss" } } }
-                var consumptionData = new Dictionary<string, Dictionary<string, DailyReading>>();
-                if (System.IO.File.Exists(_consumptionFile))
+                // 2. Update consumption using JSON Lines format
+                var filePath = GetConsumptionFilePath(plant, year, month);
+                var reading = new DailyReading
                 {
-                    var existingJson = System.IO.File.ReadAllText(_consumptionFile);
-                    if (!string.IsNullOrEmpty(existingJson))
-                    {
-                        consumptionData = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, DailyReading>>>(existingJson) ?? new Dictionary<string, Dictionary<string, DailyReading>>();
-                    }
-                }
+                    Date = dateKey,
+                    FirstWh = model.Wh,
+                    LastWh = model.Wh,
+                    FirstTime = timeKey,
+                    LastTime = timeKey
+                };
 
-                if (!consumptionData.ContainsKey(plant))
-                {
-                    consumptionData[plant] = new Dictionary<string, DailyReading>();
-                }
+                // Append new reading as JSON Line (fast append-only)
+                var jsonLine = JsonSerializer.Serialize(reading);
+                System.IO.File.AppendAllText(filePath, jsonLine + Environment.NewLine);
 
-                // Update first/last reading for the day
-                if (!consumptionData[plant].ContainsKey(dateKey))
-                {
-                    consumptionData[plant][dateKey] = new DailyReading
-                    {
-                        FirstWh = model.Wh,
-                        LastWh = model.Wh,
-                        FirstTime = timeKey,
-                        LastTime = timeKey
-                    };
-                }
-                else
-                {
-                    var reading = consumptionData[plant][dateKey];
-                    
-                    // Handle reset detection: if new reading is significantly lower than last reading
-                    // and the time gap is reasonable (not a new day), treat as reset
-                    bool isReset = model.Wh < reading.LastWh && (reading.LastWh - model.Wh) < 10000000; // Threshold: 10M Wh
-                    
-                    if (isReset)
-                    {
-                        // Reset detected: treat current reading as new first reading
-                        // The consumption for this day will be calculated as LastWh (before reset)
-                        // Next readings will start from this new baseline
-                        reading.FirstWh = model.Wh;
-                        reading.FirstTime = timeKey;
-                        reading.LastWh = model.Wh;
-                        reading.LastTime = timeKey;
-                    }
-                    else
-                    {
-                        // Normal case: update first/last reading
-                        // Update first reading if this is earlier in the day
-                        if (string.Compare(timeKey, reading.FirstTime) < 0)
-                        {
-                            reading.FirstWh = model.Wh;
-                            reading.FirstTime = timeKey;
-                        }
-                        // Update last reading if this is later in the day
-                        if (string.Compare(timeKey, reading.LastTime) > 0)
-                        {
-                            reading.LastWh = model.Wh;
-                            reading.LastTime = timeKey;
-                        }
-                    }
-                }
-
-                System.IO.File.WriteAllText(_consumptionFile, JsonSerializer.Serialize(consumptionData, new JsonSerializerOptions { WriteIndented = true }));
-
-                return Ok(new
-                {
-                    success = true,
-                    received = new
-                    {
-                        MDB = model.MDB,
-                        Plant = plant,
-                        kWh = model.kWh,
-                        Wh = model.Wh,
-                        Status = model.Status,
-                        Timestamp = model.Timestamp,
-                        Date = model.Date,
-                        Time = model.Time,
-                        Datetime = model.Datetime
-                    },
-                    message = "Data received and saved successfully"
-                });
+                return Ok(new { success = true, received = new { MDB = model.MDB, Plant = plant, kWh = model.kWh, Wh = model.Wh, Status = model.Status, Timestamp = model.Timestamp, Date = model.Date, Time = model.Time, Datetime = model.Datetime }, message = "Data received and saved successfully" });
             }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { message = $"Error saving data: {ex.Message}" });
-            }
+            catch (Exception ex) { return StatusCode(500, new { message = $"Error saving data: {ex.Message}" }); }
         }
 
-        // API to get daily totals for modal chart (Daily kWh = LastWh - FirstWh, handle resets)
         [HttpGet("GetDailyTotals")]
         public IActionResult GetDailyTotals([FromQuery] int year, [FromQuery] int month)
         {
             try
             {
-                var consumptionFile = Path.Combine(_dataFolder, "consumption.json");
                 var dailyTotals = new Dictionary<string, Dictionary<string, double>>();
                 var targetMonthPrefix = $"{year}-{month:D2}";
 
-                if (System.IO.File.Exists(consumptionFile))
+                if (!Directory.Exists(_consumptionFolder)) return Ok(new { dailyTotals });
+
+                foreach (var plantFolder in Directory.GetDirectories(_consumptionFolder))
                 {
-                    var json = System.IO.File.ReadAllText(consumptionFile);
-                    if (!string.IsNullOrEmpty(json))
+                    var plant = Path.GetFileName(plantFolder);
+                    var filePath = Path.Combine(plantFolder, $"{year}-{month:D2}.jsonl");
+
+                    if (!System.IO.File.Exists(filePath)) continue;
+
+                    var lastReadings = new Dictionary<string, DailyReading>();
+
+                    foreach (var line in System.IO.File.ReadLines(filePath))
                     {
-                        var consumptionData = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, DailyReading>>>(json);
-                        if (consumptionData != null)
-                        {
-                            foreach (var plant in consumptionData.Keys)
-                            {
-                                dailyTotals[plant] = new Dictionary<string, double>();
-                                foreach (var (date, reading) in consumptionData[plant])
-                                {
-                                    if (date.StartsWith(targetMonthPrefix))
-                                    {
-                                        // Handle reset: if LastWh < FirstWh, use LastWh as consumption
-                                        // Otherwise: Daily consumption = LastWh - FirstWh
-                                        long consumptionWh;
-                                        if (reading.LastWh < reading.FirstWh)
-                                        {
-                                            // Reset occurred, use LastWh as the new starting point
-                                            consumptionWh = reading.LastWh;
-                                        }
-                                        else
-                                        {
-                                            consumptionWh = reading.LastWh - reading.FirstWh;
-                                        }
-                                        var dailyKwh = consumptionWh / 1000.0;
-                                        dailyTotals[plant][date] = Math.Round(dailyKwh, 3);
-                                    }
-                                }
-                            }
-                        }
+                        if (string.IsNullOrWhiteSpace(line)) continue;
+                        var reading = JsonSerializer.Deserialize<DailyReading>(line);
+                        if (reading == null) continue;
+
+                        if (!lastReadings.ContainsKey(reading.Date))
+                            lastReadings[reading.Date] = reading;
+                        else
+                            lastReadings[reading.Date] = reading; // Keep latest
+                    }
+
+                    dailyTotals[plant] = new Dictionary<string, double>();
+                    foreach (var (date, reading) in lastReadings)
+                    {
+                        if (!date.StartsWith(targetMonthPrefix)) continue;
+                        long consumptionWh = reading.LastWh < reading.FirstWh ? reading.LastWh : reading.LastWh - reading.FirstWh;
+                        dailyTotals[plant][date] = Math.Round(consumptionWh / 1000.0, 3);
                     }
                 }
 
+                Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+                Response.Headers["Pragma"] = "no-cache";
+                Response.Headers["Expires"] = "0";
                 return Ok(new { dailyTotals });
             }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { message = $"Error reading data: {ex.Message}" });
-            }
+            catch (Exception ex) { return StatusCode(500, new { message = $"Error reading data: {ex.Message}" }); }
         }
 
-        // API to get monthly totals for secondary charts (Monthly kWh = Sum of daily consumptions, handle resets)
         [HttpGet("GetMonthlyTotals")]
         public IActionResult GetMonthlyTotals([FromQuery] int year)
         {
             try
             {
-                var consumptionFile = Path.Combine(_dataFolder, "consumption.json");
                 var dailyTotals = new Dictionary<string, Dictionary<string, double>>();
-                var targetYearPrefix = $"{year}-";
 
-                if (System.IO.File.Exists(consumptionFile))
+                if (!Directory.Exists(_consumptionFolder)) return Ok(new { dailyTotals });
+
+                foreach (var plantFolder in Directory.GetDirectories(_consumptionFolder))
                 {
-                    var json = System.IO.File.ReadAllText(consumptionFile);
-                    if (!string.IsNullOrEmpty(json))
+                    var plant = Path.GetFileName(plantFolder);
+                    dailyTotals[plant] = new Dictionary<string, double>();
+
+                    foreach (var file in Directory.GetFiles(plantFolder, $"{year}-*.jsonl"))
                     {
-                        var consumptionData = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, DailyReading>>>(json);
-                        if (consumptionData != null)
+                        var lastReadings = new Dictionary<string, DailyReading>();
+                        foreach (var line in System.IO.File.ReadLines(file))
                         {
-                            foreach (var plant in consumptionData.Keys)
-                            {
-                                dailyTotals[plant] = new Dictionary<string, double>();
-                                foreach (var (date, reading) in consumptionData[plant])
-                                {
-                                    if (date.StartsWith(targetYearPrefix))
-                                    {
-                                        // Handle reset: if LastWh < FirstWh, use LastWh as consumption
-                                        long consumptionWh;
-                                        if (reading.LastWh < reading.FirstWh)
-                                        {
-                                            consumptionWh = reading.LastWh;
-                                        }
-                                        else
-                                        {
-                                            consumptionWh = reading.LastWh - reading.FirstWh;
-                                        }
-                                        var dailyKwh = consumptionWh / 1000.0;
-                                        dailyTotals[plant][date] = Math.Round(dailyKwh, 3);
-                                    }
-                                }
-                            }
+                            if (string.IsNullOrWhiteSpace(line)) continue;
+                            var reading = JsonSerializer.Deserialize<DailyReading>(line);
+                            if (reading == null) continue;
+                            lastReadings[reading.Date] = reading;
+                        }
+
+                        foreach (var (date, reading) in lastReadings)
+                        {
+                            long consumptionWh = reading.LastWh < reading.FirstWh ? reading.LastWh : reading.LastWh - reading.FirstWh;
+                            dailyTotals[plant][date] = Math.Round(consumptionWh / 1000.0, 3);
                         }
                     }
                 }
 
+                Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+                Response.Headers["Pragma"] = "no-cache";
+                Response.Headers["Expires"] = "0";
                 return Ok(new { dailyTotals });
             }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { message = $"Error reading data: {ex.Message}" });
-            }
+            catch (Exception ex) { return StatusCode(500, new { message = $"Error reading data: {ex.Message}" }); }
         }
     }
 
@@ -299,6 +216,7 @@ namespace EmissiView.Controllers
 
     public class DailyReading
     {
+        public string Date { get; set; }
         public long FirstWh { get; set; }
         public long LastWh { get; set; }
         public string FirstTime { get; set; }

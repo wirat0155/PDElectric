@@ -41,6 +41,10 @@ const isPlantVisibleInPhase = (index) => {
 // Caches
 const annualDataCache = {};
 const dailyDataCache = {};
+const secondaryCache = {};
+
+// Check if running on localhost (no caching)
+const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
 let mainChart;
 let dailyChart;
@@ -117,7 +121,7 @@ const processApiDataToMonthly = (apiData, targetYear) => {
 
 const fetchAnnualData = async (year) => {
     const key = String(year);
-    if (annualDataCache[key]) return annualDataCache[key];
+    if (!isLocalhost && annualDataCache[key]) return annualDataCache[key];
 
     const prevYear = year - 1;
 
@@ -141,7 +145,7 @@ const fetchAnnualData = async (year) => {
         const lastYearPlantData = processApiDataToMonthly(dataPrev, prevYear);
 
         const result = { plantData, lastYearPlantData };
-        annualDataCache[key] = result;
+        if (!isLocalhost) annualDataCache[key] = result;
         return result;
 
     } catch (e) {
@@ -174,7 +178,7 @@ const formatDateKey = (date) => {
 
 const fetchDailyData = async (date) => {
     const key = formatDateKey(date);
-    if (dailyDataCache[key]) return dailyDataCache[key];
+    if (!isLocalhost && dailyDataCache[key]) return dailyDataCache[key];
 
     const year = date.getFullYear();
     const month = date.getMonth() + 1;
@@ -231,7 +235,7 @@ const fetchDailyData = async (date) => {
         });
 
         const result = { daysInMonth, plantData };
-        dailyDataCache[key] = result;
+        if (!isLocalhost) dailyDataCache[key] = result;
         return result;
 
     } catch (error) {
@@ -312,7 +316,31 @@ const initMainChart = () => {
                 formatter: (y) => typeof y !== "undefined" ? y.toLocaleString() + " units" : y
             }
         },
-        grid: { borderColor: '#f1f5f9' }
+        grid: { borderColor: '#f1f5f9' },
+        responsive: [{
+            breakpoint: 768,
+            options: {
+                plotOptions: {
+                    bar: { columnWidth: '70%' }
+                },
+                legend: {
+                    position: 'bottom',
+                    horizontalAlign: 'center'
+                }
+            }
+        }, {
+            breakpoint: 480,
+            options: {
+                plotOptions: {
+                    bar: { columnWidth: '90%' }
+                },
+                legend: {
+                    position: 'bottom',
+                    horizontalAlign: 'center',
+                    fontSize: '11px'
+                }
+            }
+        }]
     };
 
     mainChart = new ApexCharts(document.querySelector("#chart"), options);
@@ -517,7 +545,31 @@ const initDailyChart = () => {
                 formatter: (y) => typeof y !== "undefined" ? y.toLocaleString() : y
             }
         },
-        grid: { borderColor: '#f1f5f9' }
+        grid: { borderColor: '#f1f5f9' },
+        responsive: [{
+            breakpoint: 768,
+            options: {
+                plotOptions: {
+                    bar: { columnWidth: '70%' }
+                },
+                legend: {
+                    position: 'bottom',
+                    horizontalAlign: 'center'
+                }
+            }
+        }, {
+            breakpoint: 480,
+            options: {
+                plotOptions: {
+                    bar: { columnWidth: '90%' }
+                },
+                legend: {
+                    position: 'bottom',
+                    horizontalAlign: 'center',
+                    fontSize: '11px'
+                }
+            }
+        }]
     };
 
     dailyChart = new ApexCharts(document.querySelector("#dailyChart"), options);
@@ -602,7 +654,6 @@ const updateDailyChart = async () => {
 };
 
 // --- SECONDARY CHARTS (Cost, Consumption, CO2) ---
-const secondaryCache = {};
 
 // Helper to fetch consumption data from API (always fresh, no cache)
 const fetchConsumptionData = async (year) => {
@@ -656,7 +707,7 @@ const fetchConsumptionData = async (year) => {
 // Helper to generate data for Cost, KW, CO2
 const generateSecondaryData = async (year) => {
     const key = String(year);
-    if (secondaryCache[key]) return secondaryCache[key];
+    if (!isLocalhost && secondaryCache[key]) return secondaryCache[key];
 
     // Fetch real consumption data
     const monthlyTotals = await fetchConsumptionData(year);
@@ -686,7 +737,7 @@ const generateSecondaryData = async (year) => {
     }));
 
     const result = { costData, consData, co2Data };
-    secondaryCache[key] = result;
+    if (!isLocalhost) secondaryCache[key] = result;
     return result;
 };
 
@@ -763,7 +814,31 @@ const getSecondaryChartOptions = (unit) => ({
             fontSize: '16px',
             fontFamily: 'Outfit, sans-serif'
         }
-    }
+    },
+    responsive: [{
+        breakpoint: 768,
+        options: {
+            plotOptions: {
+                bar: { columnWidth: '70%' }
+            },
+            legend: {
+                position: 'bottom',
+                horizontalAlign: 'center'
+            }
+        }
+    }, {
+        breakpoint: 480,
+        options: {
+            plotOptions: {
+                bar: { columnWidth: '90%' }
+            },
+            legend: {
+                position: 'bottom',
+                horizontalAlign: 'center',
+                fontSize: '11px'
+            }
+        }
+    }]
 });
 
 const initSecondaryCharts = () => {
@@ -890,7 +965,18 @@ const getDetailChartOptions = (type, unit) => ({
         type: 'line', 
         height: 350, 
         toolbar: { show: false },
-        zoom: { enabled: false }
+        zoom: { enabled: false },
+        responsive: [{
+            breakpoint: 768,
+            options: {
+                legend: { position: 'bottom', horizontalAlign: 'center' }
+            }
+        }, {
+            breakpoint: 480,
+            options: {
+                legend: { position: 'bottom', horizontalAlign: 'center', fontSize: '11px' }
+            }
+        }]
     },
     stroke: { width: 3, curve: 'smooth' },
     plotOptions: { bar: { borderRadius: 4, columnWidth: '50%' } }, // If bar used
@@ -1155,6 +1241,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const y = state.viewDate.getFullYear();
         const m = state.viewDate.getMonth() + 1;
         globalInput.value = `${y}-${String(m).padStart(2, '0')}`;
+    }
+
+    // Display current date
+    const now = new Date();
+    const dateEl = document.getElementById('currentDate');
+    if (dateEl) {
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const day = String(now.getDate()).padStart(2, '0');
+        const month = months[now.getMonth()];
+        const year = now.getFullYear();
+        dateEl.textContent = `Today: ${day} ${month} ${year}`;
     }
 
     initMainChart();

@@ -21,9 +21,9 @@ namespace EmissiView.Services
 
         private IDbConnection CreateConnection(string dbCharacter)
         {
-            if (dbCharacter == "B")
+            if (dbCharacter == "NM")
             {
-                return new SqlConnection(_configuration["ConnectionStrings:BLAZING"]);
+                return new SqlConnection(_configuration["ConnectionStrings:NM"]);
             }
             else
             {
